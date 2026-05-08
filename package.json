@@ -4,7 +4,7 @@
   "description": "Stellar transaction indexer with APIs, graph visualizations, and dashboards",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp -r src/public dist/public",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "index": "node dist/indexer-runner.js"
