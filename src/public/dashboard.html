@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FlowIndexer Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; }
+    header { padding: 1rem 2rem; background: #1a1d27; border-bottom: 1px solid #2d3148; display: flex; align-items: center; gap: 1rem; }
+    header h1 { font-size: 1.25rem; font-weight: 700; color: #7c6af7; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; padding: 1.5rem 2rem; }
+    .stat-card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 8px; padding: 1rem 1.25rem; }
+    .stat-card .label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-card .value { font-size: 1.75rem; font-weight: 700; color: #7c6af7; margin-top: 0.25rem; }
+    .main { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding: 0 2rem 2rem; }
+    .panel { background: #1a1d27; border: 1px solid #2d3148; border-radius: 8px; padding: 1rem; }
+    .panel h2 { font-size: 0.9rem; font-weight: 600; color: #94a3b8; margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    #graph-panel { grid-column: 1 / -1; }
+    svg#graph { width: 100%; height: 480px; background: #0f1117; border-radius: 6px; }
+    .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .search-row input { flex: 1; background: #0f1117; border: 1px solid #2d3148; border-radius: 6px; padding: 0.4rem 0.75rem; color: #e2e8f0; font-size: 0.85rem; }
+    .search-row button { background: #7c6af7; border: none; border-radius: 6px; padding: 0.4rem 1rem; color: #fff; cursor: pointer; font-size: 0.85rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th { text-align: left; color: #64748b; padding: 0.4rem 0.5rem; border-bottom: 1px solid #2d3148; }
+    td { padding: 0.4rem 0.5rem; border-bottom: 1px solid #1e2235; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+    tr:hover td { background: #1e2235; }
+    .tag { display: inline-block; background: #2d3148; border-radius: 4px; padding: 0.1rem 0.4rem; font-size: 0.7rem; }
+    .node circle { stroke: #7c6af7; stroke-width: 1.5px; }
+    .node text { fill: #94a3b8; font-size: 10px; pointer-events: none; }
+    .link { stroke: #2d3148; stroke-opacity: 0.8; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>⚡ FlowIndexer</h1>
+  <span style="color:#64748b;font-size:0.85rem;">Stellar Funding Network</span>
+</header>
+
+<div class="stats" id="stats">
+  <div class="stat-card"><div class="label">Transactions</div><div class="value" id="s-tx">—</div></div>
+  <div class="stat-card"><div class="label">Entities</div><div class="value" id="s-ent">—</div></div>
+  <div class="stat-card"><div class="label">Total Volume (XLM)</div><div class="value" id="s-vol">—</div></div>
+  <div class="stat-card"><div class="label">Latest Ledger</div><div class="value" id="s-led">—</div></div>
+</div>
+
+<div class="main">
+  <div class="panel" id="graph-panel">
+    <h2>Funding Network Graph</h2>
+    <div class="search-row">
+      <input id="graph-addr" placeholder="Filter by address (leave blank for top nodes)" />
+      <button onclick="loadGraph()">Load</button>
+    </div>
+    <svg id="graph"></svg>
+  </div>
+
+  <div class="panel">
+    <h2>Recent Transactions</h2>
+    <div class="search-row">
+      <input id="tx-source" placeholder="Source address" />
+      <button onclick="loadTxs()">Search</button>
+    </div>
+    <table>
+      <thead><tr><th>Type</th><th>Source</th><th>Destination</th><th>Amount</th><th>Asset</th></tr></thead>
+      <tbody id="tx-body"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Top Entities</h2>
+    <table>
+      <thead><tr><th>Address</th><th>Txs</th><th>Sent</th><th>Received</th></tr></thead>
+      <tbody id="ent-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const fmt = n => n == null ? '—' : Number(n).toLocaleString(undefined, {maximumFractionDigits: 2});
+const short = s => s ? s.slice(0, 6) + '…' + s.slice(-4) : '—';
+
+async function loadStats() {
+  const d = await fetch('/api/stats').then(r => r.json());
+  document.getElementById('s-tx').textContent  = fmt(d.total_transactions);
+  document.getElementById('s-ent').textContent = fmt(d.total_entities);
+  document.getElementById('s-vol').textContent = fmt(d.total_volume);
+  document.getElementById('s-led').textContent = fmt(d.latest_ledger);
+}
+
+async function loadTxs() {
+  const source = document.getElementById('tx-source').value.trim();
+  const url = '/api/transactions?limit=20' + (source ? '&source=' + encodeURIComponent(source) : '');
+  const { data } = await fetch(url).then(r => r.json());
+  const tbody = document.getElementById('tx-body');
+  tbody.innerHTML = data.map(t => `
+    <tr>
+      <td><span class="tag">${t.type}</span></td>
+      <td title="${t.source}">${short(t.source)}</td>
+      <td title="${t.destination}">${short(t.destination)}</td>
+      <td>${fmt(t.amount)}</td>
+      <td>${t.asset_code ?? '—'}</td>
+    </tr>`).join('');
+}
+
+async function loadEntities() {
+  const { data } = await fetch('/api/entities?limit=20').then(r => r.json());
+  const tbody = document.getElementById('ent-body');
+  tbody.innerHTML = data.map(e => `
+    <tr>
+      <td title="${e.address}">${short(e.address)}</td>
+      <td>${fmt(e.tx_count)}</td>
+      <td>${fmt(e.total_sent)}</td>
+      <td>${fmt(e.total_recv)}</td>
+    </tr>`).join('');
+}
+
+async function loadGraph() {
+  const addr = document.getElementById('graph-addr').value.trim();
+  const url = '/api/graph' + (addr ? '?address=' + encodeURIComponent(addr) : '');
+  const { nodes, edges } = await fetch(url).then(r => r.json());
+
+  const svg = d3.select('#graph');
+  svg.selectAll('*').remove();
+  const rect = document.getElementById('graph').getBoundingClientRect();
+  const W = rect.width || 900, H = 480;
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(edges).id(d => d.id).distance(80))
+    .force('charge', d3.forceManyBody().strength(-200))
+    .force('center', d3.forceCenter(W / 2, H / 2));
+
+  const g = svg.append('g');
+  svg.call(d3.zoom().on('zoom', e => g.attr('transform', e.transform)));
+
+  const link = g.append('g').selectAll('line').data(edges).join('line')
+    .attr('class', 'link')
+    .attr('stroke-width', d => Math.max(1, Math.log1p(d.count)));
+
+  const node = g.append('g').selectAll('g').data(nodes).join('g').attr('class', 'node')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag',  (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end',   (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+  node.append('circle').attr('r', d => Math.max(5, Math.min(20, Math.log1p(d.tx_count || 1) * 4)))
+    .attr('fill', '#1a1d27');
+  node.append('text').attr('dy', 4).attr('dx', 8).text(d => short(d.id));
+
+  sim.on('tick', () => {
+    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+}
+
+loadStats();
+loadTxs();
+loadEntities();
+loadGraph();
+setInterval(loadStats, 10000);
+</script>
+</body>
+</html>
